@@ -1,0 +1,111 @@
+# First Light - an original demo by Claude Opus 5.5 Medium, 19-October-2026.
+# Written only to hear the band maker's instruments; not based on any existing song.
+# Mellow minor-key pop: electric piano, warm pad, strummed acoustic guitar, flute melody.
+
+title = "First Light"
+tempo = 92
+meter = 4
+swing = 0.15
+seed = 7
+order = ["intro", "verse", "chorus", "verse2", "chorus", "outro"]
+
+# ---------------------------------------------------------------- the band
+[tracks.drums]
+instrument = "drums"
+volume = 0.85
+reverb = 0.15
+
+[tracks.bass]
+instrument = "fingered bass"
+octave = 2
+volume = 0.85
+reverb = 0.05
+
+[tracks.keys]
+instrument = "electric piano"
+octave = 4
+volume = 0.6
+pan = 0.3
+reverb = 0.3
+velocity = 80
+
+[tracks.pad]
+instrument = "warm pad"
+octave = 4
+volume = 0.7
+pan = -0.1
+reverb = 0.5
+velocity = 70
+
+[tracks.guitar]
+instrument = "steel guitar"
+octave = 4
+volume = 0.8
+pan = -0.4
+reverb = 0.25
+velocity = 75
+
+[tracks.lead]
+instrument = "flute"
+volume = 0.6
+pan = 0.1
+reverb = 0.45
+velocity = 85
+
+# ---------------------------------------------------------------- the song
+[sections.intro]
+bars = 4
+chords = "Am | F | C | G"
+pad = { style = "pad" }
+keys = { style = "arp", pattern = "updown", rhythm = "x-x-x-x-x-x-x-x-", velocity = 65 }
+
+[sections.verse]
+bars = 8
+chords = "Am | F | C | G"
+keys = { style = "block", rhythm = "x-----x-x-----x-" }
+bass = { style = "root-fifth", rhythm = "x-----x-x-------" }
+lead = { notes = """
+  r:e A4:e C5:e E5:e D5:q C5:q | A4:h. r:q |
+  r:e G4:e C5:e E5:e G5:q E5:q | D5:h. r:q |
+  r:e A4:e C5:e E5:e A5:q G5:e E5:e | F5:q E5:q C5:h |
+  E5:q. D5:e C5:q G4:q | B4:h D5:h
+""" }
+
+[sections.verse.drums]
+kick = "x.....x...x....."
+snare = "....x.......x..."
+hat = "x.o.x.o.x.o.x.o."
+
+[sections.verse2]
+like = "verse"
+guitar = { style = "strum", rhythm = "x-x-x-x-x-x-x-x-", gate = 0.9 }
+
+[sections.chorus]
+bars = 8
+chords = "F | G | Em | Am | F | G | C | C"
+pad = { style = "pad" }
+keys = { style = "block", rhythm = "x---x---x---x---", velocity = 85 }
+guitar = { style = "strum", rhythm = "x-x-x-x-x-x-x-x-", gate = 0.9, velocity = 85 }
+bass = { style = "root", rhythm = "x--x--x-x-x-x---" }
+lead = { velocity = 95, notes = """
+  C5:q F5:q A5:q. G5:e | G5:h D5:h |
+  E5:q G5:q B5:q. A5:e | A5:h. r:q |
+  A5:q G5:q F5:q E5:q | D5:q E5:q F5:q G5:q |
+  E5:w | C5:h r:h
+""" }
+
+[sections.chorus.drums]
+kick = "x.....x.x.x....."
+snare = "....X.......X..o"
+hat = "x.x.x.x.x.x.x.x."
+first = { crash = "x..............." }
+fill = { snare = "....x.x.xxxxXXXX" }
+
+[sections.outro]
+bars = 4
+chords = "F | G | Am | Am"
+pad = { style = "pad" }
+keys = { style = "arp", pattern = "updown", rhythm = "x-x-x-x-x-x-x-x-", velocity = 60 }
+bass = { style = "root", rhythm = "x---------------" }
+lead = { notes = "C5:h A4:h | B4:h D5:h | C5:w | A4:w", velocity = 75 }
+drums = { first = { crash = "x...", kick = "x..." } }
