@@ -1,10 +1,12 @@
 """
 Author: Claude Opus 5.5 Medium
-Date: 19-October-2026
+Date: 22-October-2026
 PURPOSE: Reads a song file (TOML) into a checked Song object. The song file is the studio's control
 surface: Claude writes and edits it directly. This module resolves "like" sections (a chorus that
-copies another chorus and changes one thing), checks every name and value, and reports problems in
-plain words with the section and track they came from. Used by bandmaker.py; feeds band/parts.py.
+copies another chorus and changes one thing), reads voice tracks (recorded takes or singing split
+off a Lyria song, placed at a start time), checks every name and value, and reports problems in
+plain words with the section and track they came from. Used by bandmaker.py and server.py; feeds
+band/parts.py and band/render.py.
 SRP/DRY check: Pass - parsing and validation only; turning parts into notes lives in parts.py.
 """
 
@@ -36,6 +38,16 @@ class Track:
 
 
 @dataclass
+class Voice:
+    """A recorded or imported audio file laid into the song (a take, or Lyria's singing)."""
+    name: str
+    file: Path            # absolute path to the audio
+    start: float = 0.0    # seconds into the song where the file begins (negative trims its head)
+    volume: float = 1.0   # 0..2 gain
+    pan: float = 0.0      # -1 left .. 1 right
+
+
+@dataclass
 class Section:
     name: str
     bars: int
@@ -53,6 +65,9 @@ class Song:
     tracks: dict          # name -> Track (insertion order = mixer order)
     sections: dict        # name -> Section (resolved, no "like" left)
     order: list           # section names in play order
+    voices: dict = field(default_factory=dict)   # name -> Voice
+    offset: float = 0.0   # seconds of silence before the band starts (lines up with imported vocals)
+    path: Path = None     # where the song file lives
 
     @property
     def steps_per_bar(self) -> int:
@@ -62,7 +77,7 @@ class Song:
         return sum(self.sections[s].bars for s in self.order)
 
     def seconds(self) -> float:
-        return self.total_bars() * self.meter * 60.0 / self.tempo
+        return self.offset + self.total_bars() * self.meter * 60.0 / self.tempo
 
 
 def _num(value, what, lo, hi):
@@ -125,6 +140,23 @@ def _resolve_section(name, raw, tracks, seen=()):
     return bars, chords, parts
 
 
+def _load_voice(name, spec, folder: Path) -> Voice:
+    if not isinstance(spec, dict) or "file" not in spec:
+        raise SongError(f"voice '{name}' needs a file, like file = \"takes/take-1.wav\"")
+    f = Path(spec["file"]).expanduser()
+    f = f if f.is_absolute() else (folder / f).resolve()
+    if not f.exists():
+        raise SongError(f"voice '{name}': the audio file {f} doesn't exist (is the Samsung drive mounted?)")
+    v = Voice(name, f)
+    for key, lo, hi in (("start", -600, 600), ("volume", 0, 2), ("pan", -1, 1)):
+        if key in spec:
+            setattr(v, key, float(_num(spec[key], f"voice '{name}' {key}", lo, hi)))
+    unknown = set(spec) - {"file", "start", "volume", "pan"}
+    if unknown:
+        raise SongError(f"voice '{name}': unknown setting(s) {', '.join(sorted(unknown))}")
+    return v
+
+
 def load_song(path) -> Song:
     path = Path(path)
     try:
@@ -133,8 +165,12 @@ def load_song(path) -> Song:
         raise SongError(f"{path.name} isn't readable as a song file: {e}") from None
 
     tracks = {n: _load_track(n, s) for n, s in data.get("tracks", {}).items()}
-    if not tracks:
+    voices = {n: _load_voice(n, s, path.parent) for n, s in data.get("voices", {}).items()}
+    if not tracks and not voices:
         raise SongError("the song has no tracks")
+    clash = set(tracks) & set(voices)
+    if clash:
+        raise SongError(f"a track and a voice share the name {', '.join(sorted(clash))}")
     raw_sections = data.get("sections", {})
     order = data.get("order") or list(raw_sections)
     sections = {}
@@ -154,4 +190,7 @@ def load_song(path) -> Song:
         tracks=tracks,
         sections=sections,
         order=list(order),
+        voices=voices,
+        offset=float(_num(data.get("offset", 0.0), "offset", 0, 120)),
+        path=path.resolve(),
     )

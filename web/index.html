@@ -1,0 +1,422 @@
+<!doctype html>
+<!--
+Author: Claude Opus 5.5 Medium
+Date: 22-October-2026
+PURPOSE: The studio window. Lists songs, plays a song's stems together in the browser with a live
+volume slider, mute and solo per track, shows the sections on a timeline you can click to jump,
+records the Boss's voice over the music (microphone samples captured on the same audio clock as
+playback so the take lines up), saves slider positions into the song file, removes takes, and imports
+a song to split. Talks only to server.py on this Mac. It polls the server and reloads by itself when a
+song file changes, which is how Claude's plain-word edits show up while the window is open.
+SRP/DRY check: Pass - presentation and browser audio only; all song changes go through server.py.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio</title>
+<style>
+  :root {
+    --bg: #14120f; --panel: #1d1a16; --panel2: #25211b; --line: #342f27;
+    --text: #ece4d6; --dim: #9a907f; --amber: #e8a33d; --rec: #d9483b; --green: #7fb069;
+    --band: #6fa8c9; --drums: #c98a6f; --voice: #e8a33d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.4 ui-sans-serif, -apple-system, "Helvetica Neue", sans-serif; }
+  .app { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+  aside { background: var(--panel); border-right: 1px solid var(--line); padding: 18px 14px; }
+  aside h1 { font-size: 13px; letter-spacing: .18em; text-transform: uppercase; color: var(--amber); margin: 0 0 16px; }
+  .songs button { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text);
+    padding: 8px 10px; border-radius: 6px; cursor: pointer; font: inherit; }
+  .songs button:hover { background: var(--panel2); }
+  .songs button.on { background: var(--panel2); box-shadow: inset 3px 0 0 var(--amber); }
+  .songs small { display: block; color: var(--dim); font-size: 11px; }
+  .import { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; color: var(--dim); font-size: 12px; }
+  .import label.btn { display: inline-block; margin-top: 8px; }
+  main { padding: 22px 28px 60px; min-width: 0; }
+  .top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .top h2 { margin: 0; font-size: 26px; font-weight: 600; }
+  .status { color: var(--dim); font-size: 13px; }
+  .status.busy { color: var(--amber); }
+  .status.bad { color: var(--rec); }
+  .timeline { position: relative; height: 46px; margin: 18px 0 12px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; }
+  .timeline .sec { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line);
+    padding: 5px 7px; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; }
+  .timeline .head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--amber); pointer-events: none; }
+  .timeline .take { position: absolute; bottom: 0; height: 5px; background: var(--voice); opacity: .55; }
+  .transport { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .btn { background: var(--panel2); border: 1px solid var(--line); color: var(--text); padding: 8px 14px;
+    border-radius: 7px; cursor: pointer; font: inherit; text-decoration: none; }
+  .btn:hover { border-color: var(--dim); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.play { min-width: 84px; }
+  .btn.rec { color: var(--rec); border-color: #5a2a24; }
+  .btn.rec.live { background: var(--rec); color: #fff; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .75; } }
+  .time { font: 15px ui-monospace, Menlo, monospace; color: var(--dim); min-width: 120px; }
+  .hint { color: var(--dim); font-size: 12px; margin: 10px 0 0; }
+  .tracks { margin-top: 20px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 14px 150px 1fr 52px auto; align-items: center; gap: 12px;
+    padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .name b { display: block; font-weight: 600; }
+  .name small { color: var(--dim); font-size: 11px; }
+  input[type=range] { width: 100%; accent-color: var(--amber); }
+  .pct { font: 12px ui-monospace, Menlo, monospace; color: var(--dim); text-align: right; }
+  .acts { display: flex; gap: 6px; }
+  .tog { background: none; border: 1px solid var(--line); color: var(--dim); border-radius: 5px; padding: 3px 8px;
+    cursor: pointer; font: 12px ui-monospace, Menlo, monospace; }
+  .tog.on { color: var(--bg); background: var(--amber); border-color: var(--amber); }
+  .tog.drop:hover { color: var(--rec); border-color: var(--rec); }
+  details { margin-top: 22px; }
+  summary { cursor: pointer; color: var(--dim); }
+  pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; overflow: auto;
+    font: 12px/1.5 ui-monospace, Menlo, monospace; color: #d6ccba; max-height: 520px; }
+  .empty { color: var(--dim); margin-top: 60px; }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; }
+    aside { border-right: 0; border-bottom: 1px solid var(--line); }
+    main { padding: 16px; }
+    .row { grid-template-columns: 12px 1fr 44px; }
+    .row input[type=range] { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>Studio</h1>
+    <div class="songs" id="songs"></div>
+    <div class="import">
+      Bring in a finished song to split off its singing and build a new band under it.
+      <br><label class="btn">Import a song<input type="file" id="importFile" accept="audio/*" hidden></label>
+    </div>
+  </aside>
+  <main id="main"><p class="empty">Pick a song on the left.</p></main>
+</div>
+
+<script>
+// ------------------------------------------------------------------ state
+const S = {
+  name: null, data: null, rendered: null,
+  ctx: null, master: null, limiter: null,
+  buffers: {}, gains: {}, sliders: {}, mutes: new Set(), solos: new Set(),
+  sources: [], playing: false, t0: 0, from: 0, pos: 0,
+  mic: null, worklet: null, recording: false, recChunks: [], recFirst: null,
+  busy: false,
+};
+const $ = (sel, el = document) => el.querySelector(sel);
+const fmt = s => { s = Math.max(0, s); return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`; };
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function audio() {
+  if (!S.ctx) {
+    S.ctx = new AudioContext();
+    // Stems play at the loudness the finished mix gets; the limiter catches peaks above it.
+    S.limiter = S.ctx.createDynamicsCompressor();
+    S.limiter.threshold.value = -2; S.limiter.ratio.value = 20;
+    S.limiter.attack.value = 0.003; S.limiter.release.value = 0.15;
+    S.master = S.ctx.createGain();
+    S.master.connect(S.limiter).connect(S.ctx.destination);
+  }
+  return S.ctx;
+}
+
+// ------------------------------------------------------------------ songs list
+async function loadSongs() {
+  const songs = await api("/api/songs");
+  $("#songs").innerHTML = songs.map(s =>
+    `<button data-name="${esc(s.name)}" class="${s.name === S.name ? "on" : ""}">${esc(s.title)}
+       <small>${s.job ? esc(s.job) + "…" : s.error ? "has a problem" : esc(s.name)}</small></button>`).join("");
+  document.querySelectorAll("#songs button").forEach(b => b.onclick = () => openSong(b.dataset.name));
+}
+
+async function openSong(name) {
+  stop();
+  Object.assign(S, { name, data: null, rendered: null, buffers: {}, pos: 0 });
+  S.mutes.clear(); S.solos.clear();
+  await refresh(true);
+  loadSongs();
+}
+
+// ------------------------------------------------------------------ polling + loading stems
+async function refresh(force = false) {
+  if (!S.name || S.recording) return;
+  let d;
+  try { d = await api(`/api/song/${encodeURIComponent(S.name)}`); } catch (e) { return; }
+  S.data = d;
+  const rendered = d.info && d.info.rendered;
+  if (rendered && (force || rendered !== S.rendered)) {
+    const wasPlaying = S.playing, at = position();
+    stop();
+    await loadStems(d);
+    S.rendered = rendered;
+    draw();
+    if (wasPlaying) play(at);
+  } else {
+    drawStatus();
+  }
+}
+
+async function loadStems(d) {
+  const ctx = audio();
+  const v = d.info.rendered;
+  const stems = d.info.stems;
+  const entries = await Promise.all(stems.map(async st => {
+    const r = await fetch(`/audio/${encodeURIComponent(S.name)}/stems/${encodeURIComponent(st.name)}.wav?v=${v}`);
+    return [st.name, await ctx.decodeAudioData(await r.arrayBuffer())];
+  }));
+  S.buffers = Object.fromEntries(entries);
+  S.gains = {};
+  S.sliders = {};
+  for (const st of stems) {
+    const g = ctx.createGain();
+    g.connect(S.master);
+    S.gains[st.name] = g;
+    S.sliders[st.name] = st.muted ? 0 : 1;   // a new render bakes the old slider positions in
+  }
+  S.master.gain.value = Math.pow(10, (d.info.gain_db || 0) / 20);
+  applyGains();
+}
+
+function applyGains() {
+  for (const [name, g] of Object.entries(S.gains)) {
+    const heard = S.solos.size ? S.solos.has(name) : !S.mutes.has(name);
+    g.gain.value = heard ? S.sliders[name] : 0;
+  }
+}
+
+// ------------------------------------------------------------------ transport
+function duration() {
+  return Math.max(0, ...Object.values(S.buffers).map(b => b.duration), (S.data?.info?.seconds) || 0);
+}
+function position() {
+  return S.playing ? S.from + (S.ctx.currentTime - S.t0) : S.pos;
+}
+function play(at = S.pos) {
+  const ctx = audio();
+  ctx.resume();
+  stopSources();
+  S.t0 = ctx.currentTime + 0.12;   // a small lead so every stem starts on the same sample
+  S.from = at;
+  for (const [name, buf] of Object.entries(S.buffers)) {
+    if (at >= buf.duration) continue;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(S.gains[name]);
+    src.start(S.t0, at);
+    S.sources.push(src);
+  }
+  S.playing = true;
+  drawTransport();
+  tick();
+}
+function stopSources() {
+  S.sources.forEach(s => { try { s.stop(); } catch (e) {} });
+  S.sources = [];
+}
+function stop() {
+  if (S.playing) S.pos = position();
+  stopSources();
+  S.playing = false;
+  if (S.recording) finishTake();
+  drawTransport();
+}
+function seek(t) {
+  t = Math.max(0, Math.min(duration(), t));
+  if (S.playing) play(t); else { S.pos = t; drawHead(); }
+}
+function tick() {
+  if (!S.playing) return;
+  const p = position();
+  if (p >= duration()) { stop(); S.pos = 0; drawHead(); return; }
+  drawHead();
+  requestAnimationFrame(tick);
+}
+
+// ------------------------------------------------------------------ recording
+const WORKLET = `
+class Rec extends AudioWorkletProcessor {
+  constructor() { super(); this.on = false; this.port.onmessage = e => { this.on = e.data === "start"; this.first = this.on; }; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (this.on && ch) { this.port.postMessage({ t: this.first ? currentTime : null, d: ch.slice(0) }); this.first = false; }
+    return true;
+  }
+}
+registerProcessor("rec", Rec);`;
+
+async function ensureMic() {
+  if (S.worklet) return;
+  const ctx = audio();
+  // Raw microphone: the browser's own cleanup would fight ours and smear the timing.
+  S.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })));
+  S.worklet = new AudioWorkletNode(ctx, "rec");
+  S.worklet.port.onmessage = e => {
+    if (!S.recording) return;
+    if (e.data.t !== null) S.recFirst = e.data.t;
+    S.recChunks.push(e.data.d);
+  };
+  const silent = ctx.createGain(); silent.gain.value = 0;   // keeps the worklet running, outputs nothing
+  ctx.createMediaStreamSource(S.mic).connect(S.worklet).connect(silent).connect(ctx.destination);
+}
+
+async function startTake() {
+  try { await ensureMic(); } catch (e) { setStatus("The microphone isn't available: " + e.message, "bad"); return; }
+  S.recChunks = []; S.recFirst = null; S.recording = true;
+  S.worklet.port.postMessage("start");
+  play(S.playing ? position() : S.pos);
+  drawTransport();
+}
+
+async function finishTake() {
+  S.worklet.port.postMessage("stop");
+  S.recording = false;
+  const chunks = S.recChunks; S.recChunks = [];
+  if (!chunks.length || S.recFirst === null) return;
+  // Song time of the first recorded sample. The audio clock is shared with playback; the speaker
+  // delay is subtracted so the take lands where it was sung against what was heard.
+  const latency = (S.ctx.outputLatency || 0) + (S.ctx.baseLatency || 0);
+  const start = S.from + (S.recFirst - S.t0) - latency;
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const all = new Float32Array(total);
+  let at = 0; for (const c of chunks) { all.set(c, at); at += c.length; }
+  setStatus("Saving and cleaning up the take…", "busy");
+  try {
+    const d = await api(`/api/take/${encodeURIComponent(S.name)}?rate=${S.ctx.sampleRate}&start=${start.toFixed(4)}`,
+      { method: "POST", body: all.buffer });
+    setStatus(`Kept ${d.take}. It's in the song now.`);
+    await refresh(true);
+  } catch (e) { setStatus("Couldn't save the take: " + e.message, "bad"); }
+}
+
+// ------------------------------------------------------------------ actions
+async function action(path, label, body) {
+  setStatus(label + "…", "busy");
+  try {
+    await api(path, { method: "POST", body, headers: { "Content-Type": "application/json" } });
+    await refresh(true);
+    setStatus("Done.");
+  } catch (e) { setStatus(e.message, "bad"); }
+}
+const saveMix = () => action(`/api/save-mix/${encodeURIComponent(S.name)}`, "Saving the mix into the song",
+  JSON.stringify({ gains: S.sliders }));
+const dropVoice = v => confirm(`Remove ${v} from the song? The recording itself stays on the drive.`) &&
+  action(`/api/drop-voice/${encodeURIComponent(S.name)}/${encodeURIComponent(v)}`, `Removing ${v}`);
+
+$("#importFile").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const title = prompt("What should this song be called?", f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "));
+  if (title === null) return;
+  setStatus("Splitting the singing off and finding the tempo and chords. This takes a minute or two…", "busy");
+  try {
+    const d = await api(`/api/import?title=${encodeURIComponent(title)}`,
+      { method: "POST", body: f, headers: { "X-Filename": encodeURIComponent(f.name) } });
+    await loadSongs(); await openSong(d.name);
+    setStatus("Imported. The singing is on its own track and the original music is muted for comparison.");
+  } catch (err) { setStatus("Import failed: " + err.message, "bad"); }
+  e.target.value = "";
+};
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || !S.data) return;
+  if (e.code === "Space") { e.preventDefault(); S.playing ? stop() : play(); }
+  if (e.key === "r" || e.key === "R") S.recording ? stop() : startTake();
+});
+
+// ------------------------------------------------------------------ drawing
+let statusOverride = null;
+function setStatus(text, kind = "") { statusOverride = { text, kind }; drawStatus(); }
+function drawStatus() {
+  const el = $("#status"); if (!el || !S.data) return;
+  let text = "", kind = "";
+  if (S.data.job) { text = `Updating: ${S.data.job}…`; kind = "busy"; }
+  else if (S.data.error) { text = S.data.error; kind = "bad"; }
+  else if (statusOverride) { ({ text, kind } = statusOverride); }
+  else if (S.data.info) { text = `Up to date · ${fmt(S.data.info.seconds)} long`; }
+  el.textContent = text; el.className = "status " + kind;
+}
+
+function draw() {
+  const d = S.data, info = d.info || {};
+  const total = duration() || 1;
+  const kinds = Object.fromEntries((info.stems || []).map(s => [s.name, s.kind]));
+  const secs = (info.sections || []).map((s, i, a) => {
+    const end = a[i + 1] ? a[i + 1].start : info.seconds;
+    return `<div class="sec" style="left:${s.start / total * 100}%;width:${(end - s.start) / total * 100}%">${esc(s.name)}</div>`;
+  }).join("");
+  const rows = (info.stems || []).map(st => {
+    const pct = Math.round((S.sliders[st.name] ?? 1) * 100);
+    const vol = d.volumes[st.name];
+    const sub = st.kind === "voice" ? (st.muted ? "voice · muted in the mix" : "voice") : st.kind === "drums" ? "drums" : "instrument";
+    return `<div class="row" data-stem="${esc(st.name)}">
+      <span class="dot" style="background:var(--${st.kind})"></span>
+      <span class="name"><b>${esc(st.name)}</b><small>${sub}</small></span>
+      <input type="range" min="0" max="150" value="${pct}">
+      <span class="pct">${pct}%</span>
+      <span class="acts">
+        <button class="tog mute ${S.mutes.has(st.name) ? "on" : ""}" title="Mute">M</button>
+        <button class="tog solo ${S.solos.has(st.name) ? "on" : ""}" title="Solo">S</button>
+        ${st.kind === "voice" ? `<button class="tog drop" title="Remove from the song">✕</button>` : ""}
+      </span></div>`;
+  }).join("");
+  $("#main").innerHTML = `
+    <div class="top"><h2>${esc(info.title || S.name)}</h2><span class="status" id="status"></span></div>
+    <div class="timeline" id="tl">${secs}<div class="head" id="head"></div></div>
+    <div class="transport">
+      <button class="btn play" id="play"></button>
+      <button class="btn" id="back" title="Back to the start">⏮</button>
+      <span class="time" id="time"></span>
+      <button class="btn rec" id="rec"></button>
+      <button class="btn" id="save" title="Write the slider positions into the song file">Save mix</button>
+      <a class="btn" href="/audio/${encodeURIComponent(S.name)}/mix.mp3?v=${info.rendered}" download="${esc(S.name)}.mp3">Download mix</a>
+    </div>
+    <p class="hint">Space plays and stops. R records from the playhead. Wear headphones when you record, so the
+      music doesn't leak into the microphone. Mute and solo are only for listening, but the sliders are saved.</p>
+    <div class="tracks">${rows || '<div class="row"><span></span><span class="name">Nothing renders yet.</span></div>'}</div>
+    <details><summary>The song file</summary><pre>${esc(d.text)}</pre></details>`;
+  $("#tl").onclick = e => { const r = e.currentTarget.getBoundingClientRect(); seek((e.clientX - r.left) / r.width * duration()); };
+  $("#play").onclick = () => S.playing ? stop() : play();
+  $("#back").onclick = () => seek(0);
+  $("#rec").onclick = () => S.recording ? stop() : startTake();
+  $("#save").onclick = saveMix;
+  document.querySelectorAll(".row[data-stem]").forEach(row => {
+    const name = row.dataset.stem;
+    $("input", row).oninput = e => { S.sliders[name] = e.target.value / 100; $(".pct", row).textContent = e.target.value + "%"; applyGains(); };
+    $(".mute", row).onclick = e => { S.mutes.has(name) ? S.mutes.delete(name) : S.mutes.add(name); e.target.classList.toggle("on"); applyGains(); };
+    $(".solo", row).onclick = e => { S.solos.has(name) ? S.solos.delete(name) : S.solos.add(name); e.target.classList.toggle("on"); applyGains(); };
+    const drop = $(".drop", row); if (drop) drop.onclick = () => dropVoice(name);
+  });
+  drawTransport(); drawHead(); drawStatus();
+}
+
+function drawTransport() {
+  const p = $("#play"), r = $("#rec");
+  if (!p) return;
+  p.textContent = S.playing ? "❚❚ Stop" : "▶ Play";
+  r.textContent = S.recording ? "● Recording, click to stop" : "● Record";
+  r.classList.toggle("live", S.recording);
+}
+function drawHead() {
+  const h = $("#head"), t = $("#time"); if (!h) return;
+  const total = duration() || 1, p = position();
+  h.style.left = `${p / total * 100}%`;
+  t.textContent = `${fmt(p)} / ${fmt(total)}`;
+}
+
+loadSongs();
+setInterval(() => { refresh(); loadSongs(); }, 1500);
+</script>
+</body>
+</html>
